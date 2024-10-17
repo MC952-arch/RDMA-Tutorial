@@ -17,36 +17,45 @@ int main (int argc, char *argv[])
     int	ret = 0;
 
     if (argc == 3) {
-	config_info.is_server   = false;
-	config_info.server_name = argv[1];
-	config_info.sock_port   = argv[2];
+        config_info.is_server   = false;
+        config_info.server_name = argv[1];
+        config_info.sock_port   = argv[2];
+        printf("Client mode: server_name=%s, sock_port=%s\n", argv[1], argv[2]);
     } else if (argc == 2) {
-	config_info.is_server = true;
-	config_info.sock_port = argv[1];
+        config_info.is_server = true;
+        config_info.sock_port = argv[1];
+        printf("Server mode: sock_port=%s\n", argv[1]);
     } else {
-	printf ("Server: %s sock_port\n", argv[0]);
-	printf ("Client: %s server_name sock_port\n", argv[0]);
-	return 0;
-    }    
+        printf("Server: %s sock_port\n", argv[0]);
+        printf("Client: %s server_name sock_port\n", argv[0]);
+        return 0;
+    }
 
     config_info.msg_size         = 64; 
     config_info.num_concurr_msgs = 1;
+    printf("Config: msg_size=%d, num_concurr_msgs=%d\n", config_info.msg_size, config_info.num_concurr_msgs);
 
+    printf("Initializing environment\n");
     ret = init_env ();
     check (ret == 0, "Failed to init env");
 
+    printf("Setting up IB\n");
     ret = setup_ib ();
     check (ret == 0, "Failed to setup IB");
 
     if (config_info.is_server) {
+        printf("Running server\n");
         ret = run_server ();
     } else {
+        printf("Running client\n");
         ret = run_client ();
     }
     check (ret == 0, "Failed to run workload");
 
  error:
+    printf("Closing IB connection\n");
     close_ib_connection ();
+    printf("Destroying environment\n");
     destroy_env         ();
     return ret;
 }    

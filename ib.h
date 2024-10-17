@@ -12,8 +12,8 @@
 #define IB_PORT			1
 #define IB_SL			0
 #define IB_WR_ID_STOP		0xE000000000000000
-#define NUM_WARMING_UP_OPS      500000
-#define TOT_NUM_OPS             5000000
+#define NUM_WARMING_UP_OPS      50000  //500000
+#define TOT_NUM_OPS             500000 //5000000
 
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 static inline uint64_t htonll (uint64_t x) {return bswap_64(x); }

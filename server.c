@@ -34,6 +34,7 @@ void *server_thread (void *arg)
     double              duration   = 0.0;
     double              throughput = 0.0;
 
+    log("thread[%ld]: Setting thread affinity", thread_id);
     /* set thread affinity */
     CPU_ZERO (&cpuset);
     CPU_SET  ((int)thread_id, &cpuset);
@@ -41,10 +42,12 @@ void *server_thread (void *arg)
     ret  = pthread_setaffinity_np (self, sizeof(cpu_set_t), &cpuset);
     check (ret == 0, "thread[%ld]: failed to set thread affinity", thread_id);
 
+    log("thread[%ld]: Allocating wc", thread_id);
     /* pre-post recvs */
     wc = (struct ibv_wc *) calloc (num_wc, sizeof(struct ibv_wc));
     check (wc != NULL, "thread[%ld]: failed to allocate wc", thread_id);
 
+    log("thread[%ld]: Pre-posting recvs", thread_id);
     for (i = 0; i < num_concurr_msgs; i++) {
         ret = post_recv (msg_size, lkey, (uint64_t)buf_ptr, qp, buf_ptr);
         check (ret == 0, "thread[%ld]: failed to post recv", thread_id);
@@ -52,14 +55,15 @@ void *server_thread (void *arg)
         buf_ptr += buf_offset;
     }
 
+    log("thread[%ld]: Signaling the client to start", thread_id);
     /* signal the client to start */
     ret = post_send (0, lkey, 0, MSG_CTL_START, qp, buf_ptr);
     check (ret == 0, "thread[%ld]: failed to signal the client to start", thread_id);
 
     while (stop != true) {
         /* poll cq */
-	n = ibv_poll_cq (cq, num_wc, wc);
-	if (n < 0) {
+        n = ibv_poll_cq (cq, num_wc, wc);
+        if (n < 0) {
             check (0, "thread[%ld]: Failed to poll cq", thread_id);
         }
 
@@ -69,43 +73,48 @@ void *server_thread (void *arg)
                     check (0, "thread[%ld]: send failed status: %s",
                            thread_id, ibv_wc_status_str(wc[i].status));
                 } else {
-		    check (0, "thread[%ld]: recv failed status: %s",
+                    check (0, "thread[%ld]: recv failed status: %s",
                            thread_id, ibv_wc_status_str(wc[i].status));
-		}
+                }
             }
 
             if (wc[i].opcode == IBV_WC_RECV) {
                 ops_count += 1;
-		debug ("ops_count = %ld", ops_count);
+                debug ("thread[%ld]: ops_count = %ld", thread_id, ops_count);
 
-		if (ops_count == NUM_WARMING_UP_OPS) {
+                if (ops_count == NUM_WARMING_UP_OPS) {
+                    log("thread[%ld]: Warming up completed", thread_id);
                     gettimeofday (&start, NULL);
                 }
-		if (ops_count == TOT_NUM_OPS) {
-		    gettimeofday (&end, NULL);
-		    stop = true;
-		    break;
-		}
+                if (ops_count == TOT_NUM_OPS) {
+                    log("thread[%ld]: Total operations completed", thread_id);
+                    gettimeofday (&end, NULL);
+                    stop = true;
+                    break;
+                }
 
-		/* echo the message back */
+                /* echo the message back */
                 char *msg_ptr = (char *)wc[i].wr_id;
-		post_send (msg_size, lkey, 0, MSG_REGULAR, qp, msg_ptr);
+                log("thread[%ld]: Echoing message back", thread_id);
+                post_send (msg_size, lkey, 0, MSG_REGULAR, qp, msg_ptr);
 
-		/* post a new receive */
+                /* post a new receive */
+                log("thread[%ld]: Posting a new receive", thread_id);
                 post_recv (msg_size, lkey, wc[i].wr_id, qp, msg_ptr);
-	    }
-	}
+            }
+        }
     }
 
+    log("thread[%ld]: Signaling the client to stop", thread_id);
     /* signal the client to stop */
     ret = post_send (0, lkey, IB_WR_ID_STOP, MSG_CTL_STOP, qp, ib_res.ib_buf);
     check (ret == 0, "thread[%ld]: failed to signal the client to stop", thread_id);
 
     stop = false;
     while (stop != true) {
-	/* poll cq */
-	n = ibv_poll_cq (cq, num_wc, wc);
-	if (n < 0) {
+        /* poll cq */
+        n = ibv_poll_cq (cq, num_wc, wc);
+        if (n < 0) {
             check (0, "thread[%ld]: Failed to poll cq", thread_id);
         }
 
@@ -115,20 +124,21 @@ void *server_thread (void *arg)
                     check (0, "thread[%ld]: send failed status: %s",
                            thread_id, ibv_wc_status_str(wc[i].status));
                 } else {
-		    check (0, "thread[%ld]: recv failed status: %s",
+                    check (0, "thread[%ld]: recv failed status: %s",
                            thread_id, ibv_wc_status_str(wc[i].status));
-		}
+                }
             }
 
             if (wc[i].opcode == IBV_WC_SEND) {
-		if (wc[i].wr_id == IB_WR_ID_STOP) {
-		    stop = true;
-		    break;
-		}
-	    }
-	}
+                if (wc[i].wr_id == IB_WR_ID_STOP) {
+                    stop = true;
+                    break;
+                }
+            }
+        }
     }
 
+    log("thread[%ld]: Dumping statistics", thread_id);
     /* dump statistics */
     duration   = (double)((end.tv_sec - start.tv_sec) * 1000000 +
                           (end.tv_usec - start.tv_usec));
@@ -154,19 +164,23 @@ int run_server ()
     pthread_attr_t       attr;
     void                *status;
 
+    log("Initializing thread attributes");
     pthread_attr_init (&attr);
     pthread_attr_setdetachstate (&attr, PTHREAD_CREATE_JOINABLE);
 
+    log("Allocating memory for threads");
     threads = (pthread_t *) calloc (num_threads, sizeof(pthread_t));
     check (threads != NULL, "Failed to allocate threads.");
 
     for (i = 0; i < num_threads; i++) {
-	ret = pthread_create (&threads[i], &attr, server_thread, (void *)i);
-	check (ret == 0, "Failed to create server_thread[%ld]", i);
+        log("Creating server_thread[%ld]", i);
+    ret = pthread_create (&threads[i], &attr, server_thread, (void *)i);
+    check (ret == 0, "Failed to create server_thread[%ld]", i);
     }
 
     bool thread_ret_normally = true;
     for (i = 0; i < num_threads; i++) {
+        log("Joining server_thread[%ld]", i);
         ret = pthread_join (threads[i], &status);
         check (ret == 0, "Failed to join thread[%ld].", i);
         if ((long)status != 0) {
@@ -176,12 +190,15 @@ int run_server ()
     }
 
     if (thread_ret_normally == false) {
+        log("One or more threads failed to execute normally");
         goto error;
     }
 
+    log("Destroying thread attributes and freeing memory");
     pthread_attr_destroy    (&attr);
     free (threads);
 
+    log("Server run completed successfully");
     return 0;
 
  error:
@@ -190,5 +207,6 @@ int run_server ()
     }
     pthread_attr_destroy    (&attr);
     
+    log("Server run failed");
     return -1;
 }
